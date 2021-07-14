@@ -59,18 +59,21 @@ void UART_send(unsigned char data) {
 int main(void)
 {
 	float voltage;
-	//int result;
-	int i;
-	int fingerInSight = 0;
+	int i,j;
+	int fingerInSight[3];
+	int inSightSum=0;
 	int totalFingers = 0;
 	timeElapsed = 0;
-	//char val[5];
-	//int full;
-	//int floating;
 	overflowCount = 0;
 	char numberArr[5];
 	int input = 1;
-	int fdig=0, sdig=0, tdig=0;
+	int digits[3];
+	
+	for(i=0; i<3; i++) digits[i]=0;
+	
+	for(i=0; i<3; i++) fingerInSight[i]=1;
+	
+	// configure I/O
 	DDRB = 0xFF;
 	DDRD = 0xFF;
 	DDRC = 0xFF;
@@ -88,113 +91,81 @@ int main(void)
 	
 	while(1)
 	{
-		// start conversion, loop until end
-		ADCSRA |= (1 << ADSC);
-		while (ADCSRA & (1 << ADSC)) {;}
+		ADMUX = 0b01100111;
 		
-		// voltage calculation from ADC output
-		//result = ADC;
-		//voltage = (result * 5.0) / 1024;
-		voltage = read_adc();
-		
-		// object detection
-		if (!fingerInSight && voltage < 2) {
-			if(input==1)
-			{
-				fdig+=1;
-			}
-			else if(input==2)
-			{
-				sdig+=1;
-			}
-			else if(input==3)
-			{
-				tdig+=1;
-			}
-			totalFingers += 1;
-			timeElapsed = 0;
-			fingerInSight = 1;
-		}
-		if (fingerInSight && voltage > 2){
-			timeElapsed = 0;
-			fingerInSight = 0;
-		}
-		
-		//full = (int)voltage;
-		//voltage = (voltage-full)*100;
-		//floating = (int)voltage;
-		
-		//Lcd4_Set_Cursor(2, 1);
-		//Lcd4_Write_String("Voltage: ");
-		
-		//itoa(full, val, 10);
-		//Lcd4_Write_String(val);
-		
-		//Lcd4_Write_String(".");
-		
-		//itoa(floating, val, 10);
-		//Lcd4_Write_String(val);
-		
-		// display in LCD
-		Lcd4_Set_Cursor(1, 1);
-		if (timeElapsed > 6 && fingerInSight) {
-			// halt
+		for (j=0; j<3; j++)
+		{
+			// ================ ADC - read voltage ================
+			ADCSRA |= (1 << ADSC);
+			while (ADCSRA & (1 << ADSC)) {;}
+			voltage = read_adc();
+			ADMUX-=1;
 			
-			input=1;
-			fdig = 0;
-			sdig = 0;
-			tdig = 0;
+			// ================ Gesture - finger detection ================
+			
+			if (!fingerInSight[j] && voltage < 2) {
+				// light to dark, finger
+				digits[j] += 1;
+				timeElapsed = 0;
+				fingerInSight[j] = 1;
+			}
+			else if (fingerInSight[j] && voltage > 2) {
+				// dark to light, no finger
+				timeElapsed = 0;
+				fingerInSight[j] = 0;
+			}
+			
+		}
+		
+		inSightSum=0;
+		
+		for(i=0; i<3; i++) inSightSum+=fingerInSight[i];
+		
+		
+		// ================ Control - reset, change digit, final result ================
+		
+		if (timeElapsed > 6 && !inSightSum) {
+			// reset input, set to digit 1 (LSB)
+			timeElapsed = 0;
+			input = 1;
+			for(i=0; i<3; i++) digits[i]=0;
+			for(i=0; i<3; i++) fingerInSight[i]=1; // prevent initial 1
 			ADMUX = 0b01100111;
-			
 		}
-		
-		else if (timeElapsed > 6 && !fingerInSight) {
+		else if (timeElapsed > 6 && inSightSum) {
+			// change input digit
 			timeElapsed=0;
-			if(input==3)
-			{
-				totalFingers = 100*tdig+10*sdig+fdig;
-				
-				//Lcd4_Write_String("RESET");
-				input=1;
-				fdig = 0;
-				sdig = 0;
-				tdig = 0;
-				ADMUX = 0b01100111;
-				
+			
+				// send final result to PC
+				totalFingers = (100* digits[2]) + (10* digits[1]) +  digits[0];
 				itoa(totalFingers, numberArr, 10);
 				for (i=0; numberArr[i] != '\0'; i++)
 				UART_send(numberArr[i]);
+				
+				// set to digit 1 (LSB)
+				input = 1;
+				for(i=0; i<3; i++) digits[i]=0;
+				ADMUX = 0b01100111;
 				totalFingers = 0;
-			}
-			else
-			{
-				//Lcd4_Write_String("Give The Next Digit");
-				input+=1;
-				ADMUX-=1;
-			}
+			
+			for(i=0; i<3; i++) fingerInSight[i]=1; // prevent initial 1
 		}
 		
+		// ================ Output - printing to LCD ================
 		
+		Lcd4_Set_Cursor(1, 1); // line 1
+		itoa(input, numberArr, 10);
+		Lcd4_Write_String("Digit:   ");
+		Lcd4_Write_String(numberArr);
 		
-		
-			itoa(input, numberArr, 10);
-			Lcd4_Write_String("Digit: ");
-			Lcd4_Write_String(numberArr);
-			
-			Lcd4_Set_Cursor(2, 1);
-			
-			Lcd4_Write_String("Floor: ");
-			
-			itoa(tdig, numberArr, 10);
-			Lcd4_Write_String(numberArr);
-			
-			itoa(sdig, numberArr, 10);
-			Lcd4_Write_String(numberArr);
-			
-			itoa(fdig, numberArr, 10);
-			Lcd4_Write_String(numberArr);
-			
-		
+		Lcd4_Set_Cursor(2, 1); // line 2
+		Lcd4_Write_String("Floor: ");
+		itoa(digits[2], numberArr, 10);
+		Lcd4_Write_String(numberArr); // X00
+		itoa(digits[1], numberArr, 10);
+		Lcd4_Write_String(numberArr); // 0X0
+		itoa(digits[0], numberArr, 10);
+		Lcd4_Write_String(numberArr); // 00X
 	}
 }
 
