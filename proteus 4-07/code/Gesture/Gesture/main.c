@@ -32,6 +32,11 @@ void USART_init(void) {
 	UBRRL = 12; // baud rate 9600 bps
 }
 
+void UART_send(unsigned char data) {
+	while ((UCSRA & (1 << UDRE)) == 0x00);
+	UDR = data;
+}
+
 double read_adc()
 {
 	int v_adch=0, v_adcl=0, temp;
@@ -51,11 +56,6 @@ double read_adc()
 	return value;
 }
 
-void UART_send(unsigned char data) {
-	while ((UCSRA & (1 << UDRE)) == 0x00);
-	UDR = data;
-}
-
 int main(void)
 {
 	float voltage;
@@ -66,40 +66,41 @@ int main(void)
 	timeElapsed = 0;
 	overflowCount = 0;
 	char numberArr[5];
-	int input = 1;
 	int digits[3];
-	
-	for(i=0; i<3; i++) digits[i]=0;
-	
-	for(i=0; i<3; i++) fingerInSight[i]=1;
+	for(i=0; i<3; i++) {
+		digits[i] = 0;
+		fingerInSight[i] = 1; // prevent initial 1
+	}
 	
 	// configure I/O
 	DDRB = 0xFF;
 	DDRD = 0xFF;
 	DDRC = 0xFF;
+	
 	// configure ADC
 	ADMUX = 0b01100111; // 3.0, Right, ADC7
 	ADCSRA = 0b10000110; // 64
-	Lcd4_Init();
+
 	// configure timer
 	TCCR1A = 0b00000000; // normal mode
 	TCCR1B = 0b00000001; // no prescaler
 	TIMSK = 0b00000100; // timer 1
 	sei();
+	
 	// set comm
-	USART_init();
+	Lcd4_Init(); // LCD
+	USART_init(); // USB
 	
 	while(1)
 	{
-		ADMUX = 0b01100111;
-		
+		ADMUX = 0b01100111;	// set ADC7 as input
 		for (j=0; j<3; j++)
 		{
 			// ================ ADC - read voltage ================
 			ADCSRA |= (1 << ADSC);
 			while (ADCSRA & (1 << ADSC)) {;}
 			voltage = read_adc();
-			ADMUX-=1;
+			ADMUX -= 1; // change input, ADC7 > ADC6 > ADC5
 			
 			// ================ Gesture - finger detection ================
 			
@@ -117,55 +118,54 @@ int main(void)
 			
 		}
 		
-		inSightSum=0;
-		
-		for(i=0; i<3; i++) inSightSum+=fingerInSight[i];
-		
-		
 		// ================ Control - reset, change digit, final result ================
 		
+		inSightSum = 0; // to detect if finger present
+		for(i=0; i<3; i++) 
+			inSightSum += fingerInSight[i]; // sum=0: no, sum>0: yes
+		
 		if (timeElapsed > 6 && !inSightSum) {
-			// reset input, set to digit 1 (LSB)
+			// reset input
 			timeElapsed = 0;
-			input = 1;
-			for(i=0; i<3; i++) digits[i]=0;
-			for(i=0; i<3; i++) fingerInSight[i]=1; // prevent initial 1
-			ADMUX = 0b01100111;
+			for(i=0; i<3; i++) {
+				digits[i] = 0;
+				fingerInSight[i] = 1; // prevent initial 1
+			}
 		}
 		else if (timeElapsed > 6 && inSightSum) {
-			// change input digit
-			timeElapsed=0;
-			
-				// send final result to PC
-				totalFingers = (100* digits[2]) + (10* digits[1]) +  digits[0];
-				itoa(totalFingers, numberArr, 10);
-				for (i=0; numberArr[i] != '\0'; i++)
+			// send final result to PC
+			totalFingers = (100 * digits[2]) + (10 * digits[1]) +  digits[0];
+			itoa(totalFingers, numberArr, 10);
+			for (i=0; numberArr[i] != '\0'; i++)
 				UART_send(numberArr[i]);
-				
-				// set to digit 1 (LSB)
-				input = 1;
-				for(i=0; i<3; i++) digits[i]=0;
-				ADMUX = 0b01100111;
-				totalFingers = 0;
 			
-			for(i=0; i<3; i++) fingerInSight[i]=1; // prevent initial 1
+			// reset input
+			timeElapsed = 0;
+			for(i=0; i<3; i++) {
+				digits[i] = 0;
+				fingerInSight[i] = 1; // prevent initial 1
+			}
 		}
 		
 		// ================ Output - printing to LCD ================
 		
-		Lcd4_Set_Cursor(1, 1); // line 1
-		itoa(input, numberArr, 10);
-		Lcd4_Write_String("Digit:   ");
-		Lcd4_Write_String(numberArr);
-		
-		Lcd4_Set_Cursor(2, 1); // line 2
-		Lcd4_Write_String("Floor: ");
+		Lcd4_Set_Cursor(1, 0); // line 1
+		Lcd4_Write_String("|  Floor: ");
 		itoa(digits[2], numberArr, 10);
 		Lcd4_Write_String(numberArr); // X00
 		itoa(digits[1], numberArr, 10);
 		Lcd4_Write_String(numberArr); // 0X0
 		itoa(digits[0], numberArr, 10);
 		Lcd4_Write_String(numberArr); // 00X
+		Lcd4_Write_String("  |");
+		
+		Lcd4_Set_Cursor(2, 0); // line 2
+		// Lcd4_Write_String("|   Time:  ");
+		// itoa(timeElapsed, numberArr, 10);
+		// Lcd4_Write_String(numberArr); // timeElasped
+		// Lcd4_Write_String("s  |");
+		Lcd4_Write_String("| Finger: ");
+		Lcd4_Write_String((inSightSum != 0)? "Yes  |": " No  |"); // fingerInSight
 	}
 }
 
